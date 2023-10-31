@@ -1,0 +1,423 @@
+---
+title: "Etude_de_cas"
+output:
+  word_document: default
+  html_document: default
+date: "2023-09-28"
+---
+
+### Chargement des packages et lecture des données
+
+```{r packages}
+suppressPackageStartupMessages(require(dplyr))
+suppressPackageStartupMessages(require(ggplot2))
+```
+
+```{r df}
+df = read.csv2("C:/Users/PC/Documents/M2EA/ETUDE DE CAS/base3.csv") %>%
+  rename_all(~ toupper(.)) %>% rename(
+    "YEAR"="CALYEAR","POWER"="GROUP1","SENIORITY"="POLDUR",
+    "ALLRISK"="ADIND","REGION"="GROUP2"
+  ) %>% as_tibble()
+```
+
+```{r}
+df
+```
+
+### PREMIERE PARTIE 
+
+L'objectif de cette étude de cas est de construire une classification du niveau de risque des assurés d'une compagnie d'assurance automobile. Nous devrons établir  une règle de segmentation qui va permettre d'affecter un score à un individu, et ce score va être notre indicateur du niveau de risque. Pour ce faire, nous disposons d'une base de donnée qui enregistre 71219 observations reparties sur deux années, 35737 pour 2009 et 35542 pour 2010. Sur ces observations, sont mesurées des variables permettant de les caractériser:
+
+-   YEAR : Les années de collecte des données, 2009 et 2010
+-   GENDER : Le genre des assurés, masculin(Male) et féminin(Female)
+-   TYPE : le type du véhicule une lettre de A à F
+-   CATEGORY : Précise la catégorie du véhicule, Small | Medium | Large
+-   OCCUPATION : Précise la catégorie CSP de l'assuré
+-   AGE : Donne l'âge de l'assuré
+-   POWER : valeur numérique de 0 à 20 caractérisant la puissance du véhicule
+-   BONUS : Coefficient de malus et bonus de l'assuré
+-   SENIORITY : Ancienneté du contrat en nombre d'année
+-   VALUE : Valeur en unité monétaire du véhicule 
+-   ALLRISK : Indicateur de garantie assurance tout-risque(0 = non & 1 = oui)
+-   REGION : Donne la localité de résidence de l'assuré lettre de L à U
+-   DENSITY : Densité de la zone d'habitation
+-   SURV1 : survenu d'au moins un accident(0 = non & 1 = oui)
+
+```{r}
+glimpse(df); print("----------------------------------------------------------")
+colSums(is.na(df))
+```
+
+Seul la variable AGE possède une valeur manquante, étant de donnée que nous ne disposant de variables permettant d'identifier de façon unique les individus, il est préférable de supprimer cet individu de la base de données. Cette suppression n'affectera en rien les résultats de notre analyse on est sur une échelle de 1/71279 soit moins de 0,0014% des observations.
+
+```{r}
+summary(df %>% select_if(is.numeric), digits = 1) # Sélectionne les variables de type numérique puis calcul quelques statistiques univariées pour chaque variable
+```
+
+La variable ALLRISK étant une variable numérique(à valeurs binaire) et YEAR une variable numérique à deux modalités, nous allons les transformées en variables catégorielles.
+
+```{r}
+sort(unique(df$AGE))# Affiche les valeurs distinctes de la variable AGE
+```
+
+Deux groupes d'individus qu'on observe ici, ceux avec moins de 100 ans dont l'âge maximal est de 75 ans et ceux avec plus de 100 ans dont les valeurs sont dues à des erreurs d'écritures, nous allons conserver pour ces derniers, que les deux premiers éléments.
+
+```{r}
+lapply(df %>% select_if(is.character), table) # Sélectionne les variables ayant le type caractère puis calcule les effectifs de chaque modalité.
+```
+
+Pour les variables non numériques, nous allons les transformées en variables catégorielle en affectant le groupe de référence à la modalité ayant le nombre d'occurrence le plus élevées. Pour la variable GENDER, les modalité M et F, seront transformée en Male et Female, et pour la variable SURV1 no & yes en 0 et 1 respectivement.
+
+```{r}
+df = df %>%
+  mutate(
+    AGE = as.integer(substr(AGE,1,2)),
+    SURV1 = recode(SURV1,"yes" = "1","no" = "0"),
+    GENDER = recode(GENDER,"F" = "Female","M" = "Male"),
+  ) %>%
+  mutate_at(vars(YEAR,ALLRISK),function(x) as.character(x)) %>% tidyr::drop_na()
+```
+
+```{r}
+summary(df %>% select_if(is.numeric), digits = 1)
+print("-----------------------------------------------------------------------")
+lapply(df %>% select_if(is.character), table)
+```
+
+```{r}
+df
+```
+
+En analysant la base de données complet, la variable AGE est celle où l'on a pu observer des problèmes en particulier. Principalement car on pouvait la classer selon deux groupes, ceux ayant moins de 100 ans et ceux avec plus de 100 ans.
+Pour les individus avec moins de 100 ans, l'âge maximal observer était de 75 ans tandis que pour ceux ayant plus de 100 ans, l'âge était du type (311,344,455...) ans, ce qui ressemble le plus à une erreur d'écriture ainsi donc, on a conserver que les deux premiers éléments de la valeur âge pour les individus ayant plus de 100 ans pour avoir une certaine cohérence.
+
+Ensuite, sur la variable SURV1, on observait les modalités "yes" et "no" plutôt que "1" et "0" portant le nombre de modalités à 4 au lieu de 2. On a donc transformé ces valeurs gênante à leur valeur numérique correspondante.
+
+Un pareil cas avec la variable GENDER où sur certains individus, "Male" et "Female" était réduit à "M" et "F", on les donc transformé aux valeurs correspondante pour ramener le nombre de modalités à 2.
+
+A l'issue de ces deux manipulations, on est passé d'une base de données de 71279 à 71278 observations soit une suppression d'un seul individu représentant moins de 0.0014% de l'effectif Total.
+
+```{r,message=FALSE,warning=FALSE}
+index = caret::createDataPartition(df$SURV1, p = 0.7, list = FALSE)
+```
+
+```{r,message=FALSE,warning=FALSE}
+test = df %>% slice(-index); test
+```
+
+```{r}
+train = df %>% slice(index); train
+```
+
+### DEUXIEME PARTIE
+
+Les données d'apprentissage qu'on a appelé train sont composées de 49896 observations soit 70% des données de df contenant 71278 observations. Toutes les manipulations et mise en forme ont préalablement été faites sur df, train est donc prête à l'emploi.
+df est une base de données d'une compagnie d'assurance pour les années 2009 et 2010. Les variables de train ont été décrite après le 4e chunk.
+test représente les 30% restant de df, ce sont les données qui vont nous permettre de juger de la qualité de notre notre modèle.
+
+Etant données nos variables explicatives sont à la fois de type catégorielle et numérique, nous allons étudier les liens et les relations existantes entre ces variables et notre variable d'intérêt(SURV1) au travers de différents tests statistiques.
+
+**Description des données**
+
+Sous cette section, nous présentons quelques visualisation qui feront offices de statistique descriptives.
+
+```{r}
+train %>%
+  mutate(SURV1 = recode(SURV1,"0"="Non", "1"="Oui")) %>%
+  ggplot(aes(x = SURV1, y = AGE, fill = factor(GENDER))) +
+  geom_boxplot() +
+  stat_summary(
+    aes(label = sprintf("%s : \n %s an","Moyenne", round(after_stat(y)))),
+    fun = "mean",geom = "text", position = position_dodge(width=0.75), vjust = 0
+  ) +
+  labs(fill = "GENDER") +
+  theme(
+    legend.position = "top",
+    panel.grid = element_blank(),
+    axis.text = element_text(color = "black"),
+    panel.background = element_rect(fill = "white", colour = "black")
+  )
+```
+
+Cette visualisation qui met en relation les variables SURV1 AGE GENDER montre une différence d'âge entre les SURV1 0 et 1. Ceux de SURV1 0 sont en général plus âgé que ceux de SURV1 1. Cependant au sein des différent groupe, l'âge est de peu variable selon le sexe.
+
+```{r}
+train %>%
+  mutate(SURV1 = recode(SURV1,"0"="Non", "1"="Oui")) %>%
+  ggplot(aes(x = SURV1, y = VALUE, fill = factor(GENDER))) +
+  geom_boxplot() +
+  stat_summary(
+    aes(label = sprintf("%s : \n %s an","Moyenne", round(after_stat(y)))),
+    fun = "mean",geom = "text", position = position_dodge(width=0.75), vjust = 0
+  ) +
+  labs(fill = "GENDER") +
+  theme(
+    legend.position = "top",
+    panel.grid = element_blank(),
+    axis.text = element_text(color = "black"),
+    panel.background = element_rect(fill = "white", colour = "black")
+  )
+```
+
+
+```{r}
+train %>%
+  mutate(SURV1 = recode(SURV1,"0"="Non", "1"="Oui")) %>%
+  group_by(TYPE,SURV1) %>% 
+  summarise(TOTAL_TYPE = n(), .groups = "rowwise") %>%
+  group_by(TYPE) %>%
+  mutate(TOTAL_GROUP = sum(TOTAL_TYPE)) %>%
+  mutate(PROP_TYPE = round((TOTAL_TYPE/TOTAL_GROUP)*100)) %>%
+  ggplot(aes(TYPE,TOTAL_TYPE)) +
+  geom_bar(aes(fill=SURV1), stat="identity", color="white",position="fill") +
+  geom_label(
+    aes(
+      TYPE, PROP_TYPE,
+      label = paste(
+        TOTAL_TYPE,paste0(PROP_TYPE,"%"), sep = " Soit "
+        ), fill = SURV1
+    ),
+    position = position_fill(vjust = .5), size = 3, color = "white"
+  ) +
+  geom_text(
+    aes(label = paste0("Total = ",TOTAL_GROUP)), position = "fill", 
+    vjust = 31.2, size = 2.75
+  ) +
+  labs(y="", x="", title = "Part of SURV1 modalities for each TYPE of cars") +
+  scale_fill_manual(values = c("blue2","brown3")) +
+  theme(
+    legend.position = "bottom",
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(color = "black"),
+    legend.background =  element_rect(colour = "black"),
+    panel.background = element_rect(fill = "white", colour = "black")
+  ) + 
+  guides(fill = guide_legend(override.aes = list(label = "")))
+```
+
+```{r}
+train %>%
+  #mutate(SURV1 = recode(SURV1,"0"="Non", "1"="Oui")) %>%
+  group_by(TYPE,CATEGORY) %>% 
+  summarise(TOTAL_TYPE = n(), .groups = "rowwise") %>%
+  group_by(TYPE) %>%
+  mutate(TOTAL_GROUP = sum(TOTAL_TYPE)) %>%
+  mutate(PROP_TYPE = round((TOTAL_TYPE/TOTAL_GROUP)*100)) %>%
+  ggplot(aes(TYPE,TOTAL_TYPE)) +
+  geom_bar(aes(fill=CATEGORY), stat="identity", color="white",position="fill") +
+  geom_label(
+    aes(
+      TYPE, PROP_TYPE,
+      label = paste(
+        TOTAL_TYPE,paste0(PROP_TYPE,"%"), sep = " Soit "
+        ), fill = CATEGORY
+    ),
+    position = position_fill(vjust = .5), size = 3, color = "white"
+  ) +
+  geom_text(
+    aes(label = paste0("Total = ",TOTAL_GROUP)), position = "fill", 
+    vjust = 31.2, size = 2.75
+  ) +
+  labs(y="", x="", title = "Part of CATEGORY modalities for each TYPE of cars") +
+  scale_fill_manual(values = c("blue2","brown3","orange3")) +
+  theme(
+    legend.position = "bottom",
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(color = "black"),
+    legend.background =  element_rect(colour = "black"),
+    panel.background = element_rect(fill = "white", colour = "black")
+  ) + 
+  guides(fill = guide_legend(override.aes = list(label = "")))
+```
+
+```{r}
+train %>%
+  mutate(SURV1 = recode(SURV1,"0"="Non", "1"="Oui")) %>%
+  group_by(CATEGORY,SURV1) %>% 
+  summarise(TOTAL_CATEGORY = n(), .groups = "rowwise") %>%
+  group_by(CATEGORY) %>%
+  mutate(TOTAL_GROUP = sum(TOTAL_CATEGORY)) %>%
+  mutate(PROP_CATEGORY = round((TOTAL_CATEGORY/TOTAL_GROUP)*100)) %>%
+  ggplot(aes(CATEGORY,TOTAL_CATEGORY)) +
+  geom_bar(aes(fill=SURV1), stat="identity", color="white",position="fill") +
+  geom_label(
+    aes(
+      CATEGORY, PROP_CATEGORY,
+      label = paste(
+        TOTAL_CATEGORY,paste0(PROP_CATEGORY,"%"), sep = " Soit "
+        ), fill = SURV1
+    ),
+    position = position_fill(vjust = .5), size = 3, color = "white"
+  ) +
+  geom_text(
+    aes(label = paste0("Total = ",TOTAL_GROUP)), position = "fill", 
+    vjust = 31.2, size = 2.75
+  ) +
+  labs(y="", x="", title = "Part of SURV1 modalities for each CATEGORY of cars") +
+  scale_fill_manual(values = c("blue2","brown3")) +
+  theme(
+    legend.position = "bottom",
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(color = "black"),
+    legend.background =  element_rect(colour = "black"),
+    panel.background = element_rect(fill = "white", colour = "black")
+  ) + 
+  guides(fill = guide_legend(override.aes = list(label = "")))
+```
+
+
+Ce graphique montre la proportion des modalités de SURV1 dans chaque modalité de la CATEGORY. On voit ici que que les SURV1==Oui(Ceux qui ont au moins un accident on des proportions autour de 11%-16%), c'est principalement e cas avec les autres variables catégorielle ont trouve un niveau SURV1 == 0ui très faible. Voici des exemples ci-contre:
+
+```{r}
+train %>%
+  mutate(SURV1 = recode(SURV1,"0"="Non", "1"="Oui")) %>%
+  group_by(OCCUPATION,SURV1) %>% 
+  summarise(TOTAL_OCCUPATION = n(), .groups = "rowwise") %>%
+  group_by(OCCUPATION) %>%
+  mutate(TOTAL_GROUP = sum(TOTAL_OCCUPATION)) %>%
+  mutate(PROP_OCCUPATION = round((TOTAL_OCCUPATION/TOTAL_GROUP)*100)) %>%
+  ggplot(aes(OCCUPATION,TOTAL_OCCUPATION)) +
+  geom_bar(aes(fill=SURV1), stat="identity", color="white",position="fill") +
+  geom_label(
+    aes(
+      OCCUPATION, PROP_OCCUPATION,
+      label = paste(
+        TOTAL_OCCUPATION,paste0(PROP_OCCUPATION,"%"), sep = " Soit "
+        ), fill = SURV1
+    ),
+    position = position_fill(vjust = .5), size = 3, color = "white"
+  ) +
+  geom_text(
+    aes(label = paste0("Total = ",TOTAL_GROUP)), position = "fill", 
+    vjust = 31.2, size = 2.75
+  ) +
+  labs(y = "", x ="", title = "Part of SURV1 modalities for each OCCUPATION") +
+  scale_fill_manual(values = c("cyan4","orange3")) +
+  theme(
+    legend.position = "bottom",
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(color = "black"),
+    legend.background =  element_rect(colour = "black"),
+    panel.background = element_rect(fill = "white", colour = "black")
+  ) + 
+  guides(fill = guide_legend(override.aes = list(label = "")))
+```
+
+**variables catégorielles ~ SURV1**
+
+Sous cette section,, nous allons effectuer des tests d'indépendance entre nos différence variables explicative de types catégorielle avec la variable d'intérêt SURV1(elle aussi catégorielle). 
+Pour ce faire, nous allons utiliser la statistique du khi-2 qui permet de tester l'association où l'indépendance.
+
+```{r}
+chisq.test(table(train$SURV1,train$GENDER))
+print("-----------------------------------------------------------------------")
+chisq.test(table(train$SURV1,train$TYPE))
+print("-----------------------------------------------------------------------")
+chisq.test(table(train$SURV1,train$CATEGORY))
+print("-----------------------------------------------------------------------")
+chisq.test(table(train$SURV1,train$OCCUPATION))
+print("-----------------------------------------------------------------------")
+chisq.test(table(train$SURV1,train$POWER))
+print("-----------------------------------------------------------------------")
+chisq.test(table(train$SURV1,train$ALLRISK))
+print("-----------------------------------------------------------------------")
+chisq.test(table(train$SURV1,train$REGION))
+```
+
+La statistique du test est construite avec l'hypothèse initiale qui stipule l'absence de non indépendance entre les variables. Les résultats de ces différents tests, fournissent tous, un p-value extrêmement faible, toutes inférieures au seuil (0.1,0.05,0.01), on ne peut donc accepter l'hypothèse initiale de non indépendance, la connaissance d'une modalité d'une variable autre que celle de SURV1 ne permet donc pas de déduire la valeur de la modalité de SURV1.
+
+**Variables numériques ~ SURV1**
+
+Cette sous-partie est réservée à l'analyse des liens entre nos variables explicatives continues et la SURV1. Etant donnée la nature (continue,catégorielle) des variables, les tests les lieux appropriés sont ceux de student. Ces tests, permettent si deux groupes d'une variables catégorielle sont distinctes. Si la distinction est avérée, alors la variable continue est pertinente.
+
+```{r}
+t.test(train$AGE ~ train$SURV1, data = train, conf.level = 0.99)
+print("-----------------------------------------------------------------------")
+t.test(train$BONUS ~ train$SURV1, data = train, conf.level = 0.99)
+print("-----------------------------------------------------------------------")
+t.test(train$SENIORITY ~ train$SURV1, data = train, conf.level = 0.99)
+print("-----------------------------------------------------------------------")
+t.test(train$VALUE ~ train$SURV1, data = train, conf.level = 0.99)
+print("-----------------------------------------------------------------------")
+t.test(train$DENSITY ~ train$SURV1, data = train, conf.level = 0.99)
+```
+
+Les différents tests statistiques de student entre la variable SURV1 et les autres variables numériques permettant de tester l'égalité des moyennes des groupes SURV1(0 = Non,1 = Oui), donnent des p-value extrêmement faible. L'hypothèse d'égalité des moyennes des groupes ne peut-être acceptée, il existe donc une différence significative entre les modalités de SURV1 pour chaque variable numérique. Une attention particulière pourrait être apporter sur les tests entre les variables c(SNIORITY,VALUE) et SURV1 où même si il y a différence de moyennes, les écarts sont assez faibles. On part donc sur la conclusion que les individus des groupes SURV1 0 et 1 sont en général différents pour les différentes variables numériques.
+
+*Etude de l'endogenéité*
+
+```{r}
+reshape2::melt(round(cor(select_if(train,is.numeric)),3)) %>%
+  ggplot(aes(Var1,Var2,fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = value),color = "white") +
+  labs(
+    title = "heatmap of train numerics variables correlations"
+    ,x = "", y = "", fill = ""
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = "white",colour="black")
+  )
+```
+
+La matrice ci-dessus décrit les corrélations entre les variables numériques de notre base de données. Seul le couple de variables (AGE,POWWER) possède les corrélations les plus élevées en valeurs absolue:
+
+AGE ~ BONUS, présence de corrélation négatives, le BONUS baisse avec l’âge. Les individus âgés ont tendance à avoir plus de bonus(baisse de leur prime) que de malus(hausse de leur prime).
+
+L'analyse endogène évite d'inclure des variables qui peuvent perturber les résultats d'une régression mais aussi elle permet de savoir si une ou plusieurs variables explicatives ont une influence sur une des variables explicatives.
+
+La variable BONUS, est un coefficient attribué à un assuré selon que  celui-ci ait fait un accident ou non au cours des dernières années. Ce coefficient permet de capter de façon indirecte le nombre d'accidents d'un assuré, et affecte une valeur de pondération. Le coefficient de malus-bonus est donc un indicateur du nombre de sinistres d'un assuré, on peut donc déduire que la variable SURV1 peut-être une expression latente de BONUS.
+
+La variable BONUS ne peut poser un problème...
+
+Ces différents tests entre les variables explicatives et la variable d'intérêt SURV1 montre que chacune d'elle sont nécessaire dans l'évaluation du niveau de risque sinistral d'un assuré.
+
+On a aucun intérêt de travailler avec un modèle linéaire car la variable expliquée est catégorielle à deux modalités(0 = non & 1 = oui). Ainsi donc, la loi de probabilité associée à la variable d'intérêt est une distribution de Bernoulli qui répétée n fois devient une loi binomiale. Par conséquent les modèles d'estimations non linéaire sont les plus appropriés pour cette étude.
+
+**Estimations du modèle**
+
+```{r}
+train2 = train %>% mutate(
+  GENDER = relevel(as.factor(GENDER), ref = "Male"),
+  TYPE = relevel(as.factor(TYPE), ref = "A"),
+  CATEGORY = relevel(as.factor(CATEGORY), ref = "Medium"),
+  OCCUPATION = relevel(as.factor(OCCUPATION), ref = "Employed"),
+  ALLRISK = relevel(as.factor(ALLRISK), ref = "1"),
+  SURV1 = relevel(as.factor(SURV1), ref = "1")
+)
+```
+
+```{r, message=FALSE,warning=FALSE}
+logit = glm(
+  formula = SURV1 ~ GENDER + TYPE + CATEGORY + OCCUPATION + AGE + POWER +
+    BONUS + SENIORITY + ALLRISK + REGION + DENSITY,
+  family = binomial(link = "logit"), data = train2
+)
+```
+
+```{r}
+summary(logit)
+```
+
+
+```{r}
+labels(train$GENDER)
+```
