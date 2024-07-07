@@ -1,6 +1,4 @@
-# Maching learning
-
-## Overview
+# Overview
 
 This project involves the analysis of data for 71,279 policyholders of an automobile insurance company for the years 2009 and 2010. 
 The dataset includes information about whether or not these policyholders experienced at least one at-fault accident during the calendar 
